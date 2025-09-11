@@ -36,8 +36,7 @@
       "typedRoutes": true
     },
     "extra": {
-      "EXPO_PUBLIC_SUPABASE_URL": "https://nhviizcdqtylwxcpygpx.supabase.co",
-      "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5odmlpemNkcXR5bHd4Y3B5Z3B4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwNTg5NzYsImV4cCI6MjA3MjYzNDk3Nn0.-zaOLHNQHasEQhc0tRZvSoGzZSFyKMQkV19TCmV7XHI"
+      "EXPO_PUBLIC_DATA_URL": "https://gist.githubusercontent.com/Johnnywaiki/6e4392f2c1a2fbad4cbb667171836878/raw/74937bb2056157efac8c03e6343aa720a6f49f0e/gistfile1.txt"
     }
   }
 }

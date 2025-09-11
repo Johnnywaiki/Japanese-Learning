@@ -1,57 +1,72 @@
-import React from 'react';
-import FontAwesome from '@expo/vector-icons/FontAwesome';
-import { Link, Tabs } from 'expo-router';
-import { Pressable } from 'react-native';
+// app/(tabs)/_layout.tsx
+import { Tabs, Link } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { Image, Pressable, useColorScheme } from 'react-native';
 
-import Colors from '@/constants/Colors';
-import { useColorScheme } from '@/components/useColorScheme';
-import { useClientOnlyValue } from '@/components/useClientOnlyValue';
-
-// You can explore the built-in icon families and icons on the web at https://icons.expo.fyi/
-function TabBarIcon(props: {
-  name: React.ComponentProps<typeof FontAwesome>['name'];
-  color: string;
-}) {
-  return <FontAwesome size={28} style={{ marginBottom: -3 }} {...props} />;
-}
-
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
+export default function TabsLayout() {
+  const isDark = useColorScheme() === 'dark';
+  const headerBg = isDark ? '#000' : '#fff';
+  const headerTint = isDark ? '#fff' : '#111';
+  const tabBorder = isDark ? '#222' : '#eee';
 
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
-        // Disable the static render of the header on web
-        // to prevent a hydration error in React Navigation v6.
-        headerShown: useClientOnlyValue(false, true),
-      }}>
+        headerShown: true,
+        headerStyle: { backgroundColor: headerBg },
+        headerTitleStyle: { color: headerTint },
+        headerTintColor: headerTint,
+        tabBarStyle: { backgroundColor: headerBg, borderTopColor: tabBorder },
+        tabBarActiveTintColor: headerTint,
+      }}
+    >
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Tab One',
-          tabBarIcon: ({ color }) => <TabBarIcon name="code" color={color} />,
+          title: '篩選',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="funnel-outline" color={color} size={size} />
+          ),
+          // 左上：Logo
+          headerLeft: () => (
+            <Image
+              source={require('../../assets/images/icon.png')}
+              style={{ width: 24, height: 24, marginLeft: 12, borderRadius: 6 }}
+              resizeMode="contain"
+            />
+          ),
+          // 右上：設定（跳至 /settings）
           headerRight: () => (
-            <Link href="/modal" asChild>
-              <Pressable>
-                {({ pressed }) => (
-                  <FontAwesome
-                    name="info-circle"
-                    size={25}
-                    color={Colors[colorScheme ?? 'light'].text}
-                    style={{ marginRight: 15, opacity: pressed ? 0.5 : 1 }}
-                  />
-                )}
+            <Link href="/settings" asChild>
+              <Pressable hitSlop={10} style={{ paddingHorizontal: 12, paddingVertical: 8 }}>
+                <Ionicons name="settings-outline" size={22} color={headerTint} />
               </Pressable>
             </Link>
           ),
         }}
       />
+
       <Tabs.Screen
-        name="two"
+        name="practice"
         options={{
-          title: 'Tab Two',
-          tabBarIcon: ({ color }) => <TabBarIcon name="code" color={color} />,
+          title: '練習',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="create-outline" color={color} size={size} />
+          ),
+          headerLeft: () => null,
+          headerRight: () => null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="mistakes"
+        options={{
+          title: '錯題',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="alert-circle-outline" color={color} size={size} />
+          ),
+          headerLeft: () => null,
+          headerRight: () => null,
         }}
       />
     </Tabs>
