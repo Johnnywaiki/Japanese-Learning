@@ -1,5 +1,3 @@
-// src/db/schema.ts
-
 /** JLPT 程度 */
 export type Topic = 'N1' | 'N2' | 'N3' | 'N4' | 'N5';
 

@@ -1,19 +1,15 @@
 // src/db/index.ts
 import { openDatabaseSync, type SQLiteDatabase } from 'expo-sqlite';
-import { CREATE_TABLES_SQL } from './schema';
+import { CREATE_TABLES_SQL, type Topic, type Section, type MistakeRow as SchemaMistake } from './schema';
 import { syncFromSupabaseToDB } from './remote';
 
-/* --------- 本檔用到嘅最少型別（避免受 schema.ts 出口影響） --------- */
-export type Topic = 'N1' | 'N2' | 'N3' | 'N4' | 'N5';
-export type Section = 'vocab' | 'grammar' | 'reading' | 'listening';
-
+/** 前端練習用 */
 export type PoolChoice = {
   position: number;
   content: string;
   is_correct: boolean;
-  explanation: string;
+  explanation: string | null;
 };
-
 export type PoolQuestion = {
   exam_key: string;
   question_number: number;
@@ -23,30 +19,22 @@ export type PoolQuestion = {
   choices: PoolChoice[];
 };
 
-export type MistakeRow = {
-  id?: number;
-  created_at: number;           // epoch ms
-  exam_key: string;
-  question_number: number;
-  picked_position: number;
-};
+/** 錯題表型別（id 可選，方便 setState） */
+export type MistakeRow = Omit<SchemaMistake, 'id'> & { id?: number };
 
-/* ------------------------- DB 連線 ------------------------- */
-// ✅ 新檔名，確保用新 schema（有 exam_key）
 const DB_NAME = 'jp_quiz_v3.db';
-
 let _db: SQLiteDatabase | null = null;
 
 export function getDB(): SQLiteDatabase {
   if (_db) return _db;
   const db = openDatabaseSync(DB_NAME);
   db.execSync?.('PRAGMA foreign_keys = ON;');
-  db.execSync?.(CREATE_TABLES_SQL); // 一定要係 exam_key 版本
+  db.execSync?.(CREATE_TABLES_SQL);
   _db = db;
   return _db!;
 }
 
-/** 只用 Supabase，同步入本地 DB（不讀 JSON） */
+/** 只在你按「開始練習」前調用 */
 export async function seedIfEmpty(): Promise<void> {
   const db = getDB();
   await syncFromSupabaseToDB(db);
@@ -56,10 +44,9 @@ export async function seedIfEmpty(): Promise<void> {
 export type PracticeFilter = {
   level: Topic | 'N2-N3-random' | 'all';
   kind: 'language' | 'reading' | 'listening';
-  year?: number | 'random' | undefined;                 // 不用 null，保持簡單
-  month?: '07' | '12' | 'random' | undefined;           // 新：月份
-  // 舊參數（若傳入會自動映射 month）
-  session?: 'July' | 'December' | 'random' | undefined;
+  year?: number | 'random';
+  month?: '07' | '12' | 'random';
+  session?: 'July' | 'December' | 'random';
 };
 
 export function getAllForFilter(f: PracticeFilter): { pool: PoolQuestion[] } {
@@ -71,15 +58,12 @@ export function getAllForFilter(f: PracticeFilter): { pool: PoolQuestion[] } {
   else if (f.level === 'N2-N3-random') levels = ['N2', 'N3'];
   else levels = [f.level as Topic];
 
-  // 月份（容許沿用 session）
   const effMonth =
     f.month ??
-    (f.session === 'July' ? '07'
-      : f.session === 'December' ? '12'
-      : f.session === 'random' ? 'random'
-      : undefined);
+    (f.session === 'July' ? '07' :
+     f.session === 'December' ? '12' :
+     f.session === 'random' ? 'random' : undefined);
 
-  // where & params
   const conds: string[] = [];
   const params: any[] = [];
 
@@ -87,7 +71,7 @@ export function getAllForFilter(f: PracticeFilter): { pool: PoolQuestion[] } {
     conds.push(`e.level IN (${levels.map(() => '?').join(',')})`);
     params.push(...levels);
   }
-  if (f.year && f.year !== 'random') {
+  if (typeof f.year === 'number') {
     conds.push(`e.year = ?`);
     params.push(f.year);
   }
@@ -96,19 +80,16 @@ export function getAllForFilter(f: PracticeFilter): { pool: PoolQuestion[] } {
     params.push(effMonth);
   }
 
-  // 類型 → section
   if (f.kind === 'language') {
     conds.push(`q.section IN ('vocab','grammar')`);
   } else if (f.kind === 'reading') {
     conds.push(`q.section = 'reading'`);
   } else {
-    // listening 暫未支援：令結果為空
-    conds.push(`1=0`);
+    conds.push(`1=0`); // listening 未支援
   }
 
   const whereSQL = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
 
-  // ✅ 注意：JOIN 用 e.exam_key
   type QRow = {
     exam_key: string;
     question_number: number;
@@ -118,27 +99,27 @@ export function getAllForFilter(f: PracticeFilter): { pool: PoolQuestion[] } {
   };
 
   const qs =
-    db.getAllSync?.<QRow>(
+    getDB().getAllSync?.<QRow>(
       `
       SELECT q.exam_key, q.question_number, q.section, q.stem, q.passage
       FROM questions q
       JOIN exams e ON e.exam_key = q.exam_key
       ${whereSQL}
       ORDER BY e.year DESC, q.exam_key, q.question_number
-    `,
+      `,
       ...params
     ) ?? [];
 
   const pool: PoolQuestion[] = [];
   for (const q of qs) {
     const cs =
-      db.getAllSync?.<PoolChoice>(
+      getDB().getAllSync?.<PoolChoice>(
         `
         SELECT position, content, is_correct, explanation
         FROM choices
         WHERE exam_key = ? AND question_number = ?
         ORDER BY position
-      `,
+        `,
         q.exam_key,
         q.question_number
       ) ?? [];
@@ -152,13 +133,42 @@ export function getAllForFilter(f: PracticeFilter): { pool: PoolQuestion[] } {
       choices: cs.map(c => ({
         position: c.position,
         content: c.content,
-        is_correct: !!c.is_correct,
-        explanation: c.explanation,
+        is_correct: !!(c as any).is_correct,
+        explanation: (c as any).explanation ?? null,
       })),
     });
   }
 
   return { pool };
+}
+
+/* ---------------------- 題目詳情（錯題頁用） ---------------------- */
+export function getQuestionDetail(
+  exam_key: string,
+  question_number: number
+): {
+  stem?: string;
+  passage?: string | null;
+  choices: Array<{ position: number; content: string; is_correct: number | boolean; explanation?: string | null }>;
+} {
+  const q =
+    getDB().getAllSync?.<{ stem: string; passage: string | null }>(
+      `SELECT stem, passage FROM questions WHERE exam_key = ? AND question_number = ? LIMIT 1`,
+      exam_key,
+      question_number
+    ) ?? [undefined];
+
+  const choices =
+    getDB().getAllSync?.<{ position: number; content: string; is_correct: number; explanation: string | null }>(
+      `SELECT position, content, is_correct, explanation
+       FROM choices
+       WHERE exam_key = ? AND question_number = ?
+       ORDER BY position`,
+      exam_key,
+      question_number
+    ) ?? [];
+
+  return { stem: q[0]?.stem, passage: q[0]?.passage ?? null, choices };
 }
 
 /* ------------------------- 錯題本 ------------------------- */
@@ -167,23 +177,20 @@ export function insertMistake(args: {
   question_number: number;
   picked_position: number;
 }): void {
-  const db = getDB();
-  db.runSync?.(
+  getDB().runSync?.(
     'INSERT INTO mistakes (created_at, exam_key, question_number, picked_position) VALUES (?,?,?,?)',
     [Date.now(), args.exam_key, args.question_number, args.picked_position]
   );
 }
 
 export function getMistakes(): MistakeRow[] {
-  const db = getDB();
   return (
-    db.getAllSync?.<MistakeRow>(
+    getDB().getAllSync?.<MistakeRow>(
       'SELECT * FROM mistakes ORDER BY created_at DESC'
     ) ?? []
   );
 }
 
 export function clearMistakes(): void {
-  const db = getDB();
-  db.execSync?.('DELETE FROM mistakes;');
+  getDB().execSync?.('DELETE FROM mistakes;');
 }

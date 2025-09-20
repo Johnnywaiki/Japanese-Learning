@@ -1,6 +1,6 @@
 // app/settings.tsx
 import { useMemo, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Switch, Platform, useColorScheme } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Switch, useColorScheme } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -39,6 +39,12 @@ function makeStyles(isDark: boolean) {
   return { s };
 }
 
+// 取得 SQLite 目錄（iOS/Android 係 <document>/SQLite/；web 可能為 null）
+function getSqliteDir(): string | null {
+  const base = FileSystem.documentDirectory ?? FileSystem.cacheDirectory;
+  return base ? base + 'SQLite/' : null;
+}
+
 export default function SettingsScreen() {
   const isDark = useColorScheme() === 'dark';
   const { s } = useMemo(() => makeStyles(isDark), [isDark]);
@@ -48,22 +54,37 @@ export default function SettingsScreen() {
 
   const [fsMsg, setFsMsg] = useState<string>('');
 
-  const onResync = () => { void init({ /* 如果想每次都重拉：forceReload:true */ } as any); };
+  const onResync = () => { void init({} as any); };
 
   const onListDbFiles = () => {
     void (async () => {
-      const dir = FileSystem.documentDirectory + 'SQLite/';
-      const files = await FileSystem.readDirectoryAsync(dir).catch(() => []);
-      setFsMsg(`SQLite dir: ${dir}\nfiles: ${files.join(', ') || '(none)'}`);
+      const dir = getSqliteDir();
+      if (!dir) {
+        setFsMsg('呢個平台未提供本地檔案目錄（可能係 Web），無法列出 SQLite 檔。');
+        return;
+      }
+      const info = await FileSystem.getInfoAsync(dir);
+      if (!info.exists) {
+        setFsMsg(`SQLite 目錄未建立：${dir}\n（未曾開啟過 SQLite 或尚未寫入任何檔案）`);
+        return;
+      }
+      const files = await FileSystem.readDirectoryAsync(dir).catch(() => [] as string[]);
+      setFsMsg(`SQLite 目錄：${dir}\n檔案：${files.join(', ') || '(沒有檔案)'}`);
       console.log('SQLite dir =', dir, files);
     })();
   };
 
   const onWipeLocalDbAndResync = () => {
     void (async () => {
-      const base = FileSystem.documentDirectory + 'SQLite/';
+      const dir = getSqliteDir();
+      if (!dir) {
+        setFsMsg('呢個平台未提供本地檔案目錄（可能係 Web），無法刪除 SQLite 檔。');
+        return;
+      }
       const files = ['jp_quiz.db','jp_quiz.db-wal','jp_quiz.db-shm','jp_quiz.db-journal'];
-      for (const f of files) await FileSystem.deleteAsync(base + f, { idempotent: true }).catch(() => {});
+      for (const f of files) {
+        try { await FileSystem.deleteAsync(dir + f, { idempotent: true }); } catch {}
+      }
       setFsMsg('已刪除本地 DB 檔，正在重新同步…');
       await init({} as any);
       setFsMsg(prev => prev + '\n完成重新同步。');

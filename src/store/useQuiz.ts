@@ -1,38 +1,80 @@
-// src/store/useQuiz.ts
+import { DeviceEventEmitter } from 'react-native';
 import { create } from 'zustand';
-import { getAllForFilter, seedIfEmpty, insertMistake, type PracticeFilter } from '../db';
+import {
+  getAllForFilter,
+  seedIfEmpty,
+  insertMistake,
+  type PracticeFilter,
+} from '../db';
 import { makeQuestion } from '../features/practice/quiz';
 import type { PoolQuestion } from '../db/schema';
 
-type Option = { position: number; content: string; is_correct: boolean; explanation: string };
+type Option = {
+  position: number;
+  content: string;
+  is_correct: boolean;
+  explanation?: string;
+};
+type AnswerRec = { picked: Option; correct: boolean };
 
 type State = {
   loading: boolean;
 
-  // 題庫 & 目前指標
   pool: PoolQuestion[];
-  idx: number;
-
-  // 目前一題（由 makeQuestion 生成的可直接用於 UI 的物件）
+  idx: number; // 0-based
   current?: ReturnType<typeof makeQuestion>;
 
-  // 使用者作答狀態
-  selected?: Option | null;
+  selected?: Option | null; // 當前選擇（未提交）
   answered: boolean;
   lastCorrect?: boolean;
 
-  // 累積分數（本次練習回合）
-  score: number;
-  total: number;
-  totalAvailable: number;
+  score: number; // 已答對題數
+  total: number; // 已作答題數
+  totalAvailable: number; // 全卷題數（包含 reading 等）
+  answers: Record<number, AnswerRec>; // 每題作答紀錄
 
-  // 行為
   init: (filters?: PracticeFilter) => Promise<void>;
   pick: (o: Option) => void;
   submit: () => void;
   next: () => void;
-  prev: () => void; // ⬅️ 新增：上一題
+  prev: () => void;
+  jumpTo: (i: number) => void;
 };
+
+// ---------- helpers ----------
+const isNLevel = (lv: any) => typeof lv === 'string' && /^N[1-5]$/.test(lv);
+
+const sessionToCode = (s: any): '07' | '12' | undefined => {
+  if (s === 'July' || s === 7 || s === '7' || s === '07') return '07';
+  if (s === 'December' || s === 12 || s === '12') return '12';
+  return undefined;
+};
+const sessionToWord = (s: any): 'July' | 'December' | undefined => {
+  if (s === 'July' || s === 7 || s === '7' || s === '07') return 'July';
+  if (s === 'December' || s === 12 || s === '12') return 'December';
+  return undefined;
+};
+
+function yearFromExamKey(key?: string): number | undefined {
+  if (!key) return undefined;
+  const m = key.match(/^(N[1-5])-(\d{4})-(\d{2})$/);
+  return m ? Number(m[2]) : undefined;
+}
+function monthFromExamKey(key?: string): '07' | '12' | undefined {
+  if (!key) return undefined;
+  const m = key.match(/^(N[1-5])-(\d{4})-(\d{2})$/);
+  if (!m) return undefined;
+  return m[3] === '07' || m[3] === '12' ? (m[3] as '07' | '12') : undefined;
+}
+
+function uniqueByExamAndNo(rows: PoolQuestion[]) {
+  const mp = new Map<string, PoolQuestion>();
+  for (const q of rows) {
+    const k = `${q.exam_key}#${q.question_number}`;
+    if (!mp.has(k)) mp.set(k, q);
+  }
+  return Array.from(mp.values());
+}
 
 export const useQuiz = create<State>((set, get) => ({
   loading: false,
@@ -45,55 +87,124 @@ export const useQuiz = create<State>((set, get) => ({
   score: 0,
   total: 0,
   totalAvailable: 0,
+  answers: {},
 
-  async init(filters) {
+  async init(raw) {
     set({ loading: true });
-
-    // 只從 Supabase 同步到本地（如果已經同步過，內部會是 no-op）
     await seedIfEmpty();
 
-    // 取得題庫（已組好 choices）
-    const { pool } = getAllForFilter(
-      filters ?? { level: 'N2-N3-random', kind: 'language' }
-    );
+    const DEFAULTS: PracticeFilter = { level: 'N2-N3-random', kind: 'language' };
 
-    // 打散順序（你也可以用 exam_key + question_number 自定排序）
-    const shuffled = [...pool].sort(() => Math.random() - 0.5);
+    const level = raw?.level;
+    const year = typeof raw?.year === 'number' ? raw.year : undefined;
+    const sCode = sessionToCode(raw?.session);     // '07' | '12'
+    const sWord = sessionToWord(raw?.session);     // 'July' | 'December'
+    const wholePaper = isNLevel(level) && year !== undefined && (sCode || sWord);
 
-    if (shuffled.length === 0) {
-      set({ loading: false, pool: [], current: undefined, totalAvailable: 0, idx: 0 });
+    // 單次查詢（包埋 session 兩個格式嘗試）
+    const fetchOnce = (f: any): PoolQuestion[] => {
+      let { pool } = getAllForFilter(f);
+      if (!pool.length && f.session) {
+        const alt =
+          f.session === 'July' ? '07' :
+          f.session === 'December' ? '12' :
+          f.session === '07' ? 'July' :
+          f.session === '12' ? 'December' :
+          undefined;
+        if (alt) {
+          const { pool: pool2 } = getAllForFilter({ ...f, session: alt });
+          pool = pool2;
+        }
+      }
+      return pool;
+    };
+
+    let pool: PoolQuestion[] = [];
+
+    if (wholePaper) {
+      // 完整一份卷：逐個 kind 取，再合併（讀解都會入）
+      const kinds = ['language', 'reading', 'listening'] as const;
+      for (const k of kinds) {
+        const part = fetchOnce({
+          level, kind: k, year, session: sWord ?? sCode,
+        } as any);
+        pool.push(...part);
+      }
+    } else {
+      // 非完整卷：照用戶 filter 取一次（預設值兜底）
+      const f = raw ?? DEFAULTS;
+      pool = fetchOnce(f as any);
+    }
+
+    // 前端硬性過濾（雙重保險）
+    if (year !== undefined) {
+      pool = pool.filter((q) => yearFromExamKey(q.exam_key) === year);
+    }
+    if (sCode) {
+      pool = pool.filter((q) => monthFromExamKey(q.exam_key) === sCode);
+    }
+
+    // 去重 + 排序
+    const ordered = uniqueByExamAndNo(pool).sort((a, b) => {
+      if (a.exam_key === b.exam_key) return a.question_number - b.question_number;
+      return a.exam_key < b.exam_key ? -1 : 1;
+    });
+
+    if (ordered.length === 0) {
+      console.warn('[init] 無題目：', JSON.stringify({ raw }));
+      set({
+        loading: false,
+        pool: [],
+        idx: 0,
+        current: undefined,
+        selected: null,
+        answered: false,
+        lastCorrect: undefined,
+        score: 0,
+        total: 0,
+        totalAvailable: 0,
+        answers: {},
+      });
       return;
     }
 
     set({
       loading: false,
-      pool: shuffled,
+      pool: ordered,
       idx: 0,
-      current: makeQuestion(shuffled[0]),
+      current: makeQuestion(ordered[0]),
       selected: null,
       answered: false,
       lastCorrect: undefined,
       score: 0,
       total: 0,
-      totalAvailable: shuffled.length,
+      totalAvailable: ordered.length,
+      answers: {},
     });
   },
 
   pick(o) {
-    // 已提交後不可再改選
-    if (get().answered) return;
+    const { idx, answers, answered } = get();
+    if (answered) return;       // 已提交唔俾改
+    if (answers[idx]) return;   // 呢題已提交過
     set({ selected: o });
   },
 
   submit() {
-    const { current, selected } = get();
+    const { current, selected, idx, answers } = get();
     if (!current || !selected) return;
+    if (answers[idx]) return; // 防重覆計分
 
     const correct = current.isCorrect(selected);
 
-    // 記錄錯題（只在錯時入庫）
     if (!correct) {
       insertMistake({
+        exam_key: current.exam_key,
+        question_number: current.question_number,
+        picked_position: selected.position,
+      });
+      // ✅ 告知錯題頁即時刷新
+      DeviceEventEmitter.emit('mistake-added', {
         exam_key: current.exam_key,
         question_number: current.question_number,
         picked_position: selected.position,
@@ -105,34 +216,58 @@ export const useQuiz = create<State>((set, get) => ({
       lastCorrect: correct,
       score: s.score + (correct ? 1 : 0),
       total: s.total + 1,
+      answers: { ...s.answers, [idx]: { picked: selected, correct } },
     }));
   },
 
   next() {
-    const { pool, idx } = get();
+    const { pool, idx, answers } = get();
     if (pool.length === 0) return;
 
-    const nextIdx = Math.min(pool.length - 1, idx + 1); // 走到尾就停住（如要循環可改成 (idx+1)%pool.length）
+    const nextIdx = Math.min(pool.length - 1, idx + 1);
+    const q = makeQuestion(pool[nextIdx]);
+    const past = answers[nextIdx];
+
     set({
       idx: nextIdx,
-      current: makeQuestion(pool[nextIdx]),
-      selected: null,
-      answered: false,
-      lastCorrect: undefined,
+      current: q,
+      selected: past?.picked ?? null,
+      answered: !!past,
+      lastCorrect: past?.correct,
     });
   },
 
   prev() {
-    const { pool, idx } = get();
+    const { pool, idx, answers } = get();
     if (pool.length === 0) return;
 
-    const prevIdx = Math.max(0, idx - 1); // 到頭就停（如要循環可改成 (idx-1+pool.length)%pool.length）
+    const prevIdx = Math.max(0, idx - 1);
+    const q = makeQuestion(pool[prevIdx]);
+    const past = answers[prevIdx];
+
     set({
       idx: prevIdx,
-      current: makeQuestion(pool[prevIdx]),
-      selected: null,
-      answered: false,
-      lastCorrect: undefined,
+      current: q,
+      selected: past?.picked ?? null,
+      answered: !!past,
+      lastCorrect: past?.correct,
+    });
+  },
+
+  jumpTo(i) {
+    const { pool, answers } = get();
+    if (pool.length === 0) return;
+
+    const clamped = Math.max(0, Math.min(pool.length - 1, i));
+    const q = makeQuestion(pool[clamped]);
+    const past = answers[clamped];
+
+    set({
+      idx: clamped,
+      current: q,
+      selected: past?.picked ?? null,
+      answered: !!past,
+      lastCorrect: past?.correct,
     });
   },
 }));

@@ -1,72 +1,71 @@
 // app/(tabs)/_layout.tsx
-import { Tabs, Link } from 'expo-router';
+import React from 'react';
+import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Image, Pressable, useColorScheme } from 'react-native';
+import { Pressable, useColorScheme } from 'react-native';
+import { router } from 'expo-router';
 
 export default function TabsLayout() {
   const isDark = useColorScheme() === 'dark';
   const headerBg = isDark ? '#000' : '#fff';
   const headerTint = isDark ? '#fff' : '#111';
-  const tabBorder = isDark ? '#222' : '#eee';
+  const tabBg = isDark ? '#0b0b0b' : '#fff';
 
   return (
     <Tabs
       screenOptions={{
         headerShown: true,
         headerStyle: { backgroundColor: headerBg },
-        headerTitleStyle: { color: headerTint },
         headerTintColor: headerTint,
-        tabBarStyle: { backgroundColor: headerBg, borderTopColor: tabBorder },
-        tabBarActiveTintColor: headerTint,
+        headerTitleStyle: { color: headerTint },
+        tabBarActiveTintColor: isDark ? '#fff' : '#111',
+        tabBarInactiveTintColor: isDark ? '#9ca3af' : '#6b7280',
+        tabBarStyle: { backgroundColor: tabBg },
+        headerRight: () => (
+          <Pressable
+            onPress={() => router.push('/settings')}
+            hitSlop={10}
+            style={{ paddingHorizontal: 12 }}
+          >
+            <Ionicons name="settings-outline" size={22} color={headerTint} />
+          </Pressable>
+        ),
       }}
     >
       <Tabs.Screen
         name="index"
         options={{
-          title: '篩選',
+          title: '試卷',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="funnel-outline" color={color} size={size} />
-          ),
-          // 左上：Logo
-          headerLeft: () => (
-            <Image
-              source={require('../../assets/images/icon.png')}
-              style={{ width: 24, height: 24, marginLeft: 12, borderRadius: 6 }}
-              resizeMode="contain"
-            />
-          ),
-          // 右上：設定（跳至 /settings）
-          headerRight: () => (
-            <Link href="/settings" asChild>
-              <Pressable hitSlop={10} style={{ paddingHorizontal: 12, paddingVertical: 8 }}>
-                <Ionicons name="settings-outline" size={22} color={headerTint} />
-              </Pressable>
-            </Link>
+            <Ionicons name="document-text-outline" size={size} color={color} />
           ),
         }}
       />
-
       <Tabs.Screen
         name="practice"
         options={{
           title: '練習',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="create-outline" color={color} size={size} />
+            <Ionicons name="create-outline" size={size} color={color} />
           ),
-          headerLeft: () => null,
-          headerRight: () => null,
         }}
       />
-
       <Tabs.Screen
         name="mistakes"
         options={{
           title: '錯題',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="alert-circle-outline" color={color} size={size} />
+            <Ionicons name="close-circle-outline" size={size} color={color} />
           ),
-          headerLeft: () => null,
-          headerRight: () => null,
+        }}
+      />
+      <Tabs.Screen
+        name="translate"
+        options={{
+          title: '翻譯',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="language" size={size} color={color} />
+          ),
         }}
       />
     </Tabs>
