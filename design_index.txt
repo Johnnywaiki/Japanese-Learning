@@ -1,0 +1,60 @@
+app/settings.tsx:9:import { useQuiz } from '../src/store/useQuiz';
+app/settings.tsx:22:  const s = StyleSheet.create({
+app/settings.tsx:48:export default function SettingsScreen() {
+app/settings.tsx:52:  const { init } = useQuiz();
+app/settings.tsx:149:        <Pressable onPress={() => router.replace('/(tabs)')} style={[s.pill, s.pillActive, { alignSelf: 'flex-start' }]}>
+app/index.tsx:9:export default function Index() {
+app/index.tsx:14:        if (lv) router.replace('/(tabs)/home');
+app/index.tsx:15:        else router.replace('/level');
+app/index.tsx:17:        router.replace('/level');
+app/intro.tsx:6:export default function IntroScreen() {
+app/intro.tsx:9:      router.replace('/(tabs)'); // 或 '/(tabs)/index' 視乎你嘅初始 tab
+app/intro.tsx:29:const styles = StyleSheet.create({
+app/result.tsx:6:export default function ResultModal() {
+app/result.tsx:31:    router.replace(from === 'home' ? HOME : INDEX);
+app/result.tsx:71:const s = StyleSheet.create({
+app/(tabs)/index.tsx:13:import { useQuiz } from '../../src/store/useQuiz';
+app/(tabs)/index.tsx:35:  const s = StyleSheet.create({
+app/(tabs)/index.tsx:96:export default function PracticeFilterScreen() {
+app/(tabs)/index.tsx:99:  const { init } = useQuiz();
+app/(tabs)/index.tsx:137:    void init(base).then(() => router.navigate('/(tabs)/practice'));
+app/(tabs)/practice.tsx:10:import { useQuiz } from '../../src/store/useQuiz';
+app/(tabs)/practice.tsx:33:  const s = StyleSheet.create({
+app/(tabs)/practice.tsx:85:export default function PracticeScreen() {
+app/(tabs)/practice.tsx:95:  } = useQuiz();
+app/(tabs)/practice.tsx:119:      if (mode === 'daily') router.replace('/(tabs)/home');
+app/(tabs)/practice.tsx:120:      else router.replace('/(tabs)/index');
+app/(tabs)/practice.tsx:136:  const onPickNewPaper = useCallback(() => { router.replace('/(tabs)'); }, []);
+app/(tabs)/translate.tsx:4:export default function TranslateScreen() {
+app/(tabs)/home.tsx:15:import { useQuiz } from '../../src/store/useQuiz';
+app/(tabs)/home.tsx:53:  const s = StyleSheet.create({
+app/(tabs)/home.tsx:170:export default function HomeScreen() {
+app/(tabs)/home.tsx:231:      const ok = await useQuiz.getState().init({
+app/(tabs)/home.tsx:241:      if (ok) router.push('/(tabs)/practice');
+app/(tabs)/_layout.tsx:7:export default function TabsLayout() {
+app/(tabs)/mistakes.tsx:43:  const s = StyleSheet.create({
+app/(tabs)/mistakes.tsx:104:export default function MistakesScreen() {
+app/+not-found.tsx:6:export default function NotFoundScreen() {
+app/+not-found.tsx:21:const styles = StyleSheet.create({
+app/_layout.tsx:10:export default function RootLayout() {
+app/level.tsx:17:  const s = StyleSheet.create({
+app/level.tsx:35:export default function LevelScreen() {
+app/level.tsx:41:    router.replace('/(tabs)/home');
+app/modal.tsx:7:export default function ModalScreen() {
+app/modal.tsx:20:const styles = StyleSheet.create({
+app/+html.tsx:7:export default function Root({ children }: { children: React.ReactNode }) {
+src/db/remote.ts:4:import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+src/db/remote.ts:22:    console.warn('[supabase] missing EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_ANON_KEY');
+src/db/remote.ts:25:  _sb = createClient(url, anon, { db: { schema: 'public' } });
+src/db/index.ts:41:    console.log(ok ? '[seed] synced from supabase' : '[seed] supabase unavailable');
+src/db/index.ts:57:export function getAllForFilter(f: PracticeFilter): { pool: PoolQuestion[] } {
+src/store/useQuiz.ts:1:// src/store/useQuiz.ts
+src/store/useQuiz.ts:5:  getAllForFilter,
+src/store/useQuiz.ts:98:export const useQuiz = create<State>((set, get) => ({
+src/store/useQuiz.ts:136:        console.warn('[useQuiz.init] daily pool empty:', daily_key);
+src/store/useQuiz.ts:149:      const r = getAllForFilter(f);
+src/store/useQuiz.ts:161:        console.warn('[useQuiz.init] mock pool empty:', { raw });
+src/remote/supabase.ts:1:// src/remote/supabase.ts
+src/remote/supabase.ts:2:import { createClient } from '@supabase/supabase-js';
+src/remote/supabase.ts:13:export const supabase = url && anon
+src/remote/supabase.ts:14:  ? createClient(url, anon, { auth: { persistSession: false } })
