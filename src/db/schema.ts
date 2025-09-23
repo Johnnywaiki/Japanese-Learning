@@ -1,35 +1,37 @@
+// src/db/schema.ts
+
 /** JLPT 程度 */
 export type Topic = 'N1' | 'N2' | 'N3' | 'N4' | 'N5';
 
-/** 類型（目前用 vocab / grammar / reading；listening 之後再開） */
+/** 類型（語言題 or 讀解；listening 之後再開） */
 export type Section = 'vocab' | 'grammar' | 'reading' | 'listening';
 
-/** exams 表的行（注意：使用 exam_key 作主鍵） */
+/** exams 表（以 exam_key 作主鍵，例如 N2-2021-07） */
 export type ExamRow = {
-  exam_key: string;            // 例如 N2-2022-07
-  level: Topic;                // N1..N5
+  exam_key: string;
+  level: Topic;
   year: number;
-  month: '07' | '12';
+  month: '07' | '12' | string; // sqlite 內有機會係 "7"/"12"
   title: string;
 };
 
-/** questions 表的行（自然鍵 exam_key + question_number） */
+/** questions 表（自然鍵 exam_key + question_number） */
 export type QuestionRow = {
   exam_key: string;
-  question_number: number;     // 1..N
-  section: Section;            // vocab | grammar | reading | (listening)
-  stem: string;                // 題幹
-  passage: string | null;      // 讀解長文（其他類型可為 null）
+  question_number: number;
+  section: Section;
+  stem: string;
+  passage: string | null;
 };
 
-/** choices 表的行 */
+/** choices 表 */
 export type ChoiceRow = {
   exam_key: string;
   question_number: number;
   position: number;            // 1..4
   content: string;
   is_correct: boolean | 0 | 1;
-  explanation: string;
+  explanation: string | null;
 };
 
 /** 錯題（本地） */
@@ -41,10 +43,10 @@ export type MistakeRow = {
   picked_position: number;
 };
 
-/** 給前端練習用的合併結構 */
+/** 前端練習用合併結構 */
 export type PoolQuestion = {
-  exam_key: string;
-  question_number: number;
+  exam_key: string;             // mock: N2-2021-07；daily: DAILY KEY
+  question_number: number;      // mock: 試卷題號；daily: item_number
   section: Section;
   stem: string;
   passage: string | null;
@@ -52,14 +54,15 @@ export type PoolQuestion = {
     position: number;
     content: string;
     is_correct: boolean;
-    explanation: string;
+    explanation: string | null;
   }>;
 };
 
-/** 本地 SQLite 初始化 SQL（使用 exam_key） */
+/** SQLite 初始化 SQL（包含 mock & daily & mistakes） */
 export const CREATE_TABLES_SQL = `
 PRAGMA foreign_keys = ON;
 
+-- mock
 CREATE TABLE IF NOT EXISTS exams (
   exam_key TEXT PRIMARY KEY,
   level    TEXT NOT NULL,
@@ -88,7 +91,7 @@ CREATE TABLE IF NOT EXISTS choices (
   position        INTEGER NOT NULL,
   content         TEXT NOT NULL,
   is_correct      INTEGER NOT NULL, -- 0/1
-  explanation     TEXT NOT NULL,
+  explanation     TEXT,
   CONSTRAINT uq_choice UNIQUE (exam_key, question_number, position),
   CONSTRAINT fk_choice_question
     FOREIGN KEY (exam_key, question_number)
@@ -98,6 +101,7 @@ CREATE TABLE IF NOT EXISTS choices (
 
 CREATE INDEX IF NOT EXISTS idx_choices_q ON choices (exam_key, question_number);
 
+-- mistakes
 CREATE TABLE IF NOT EXISTS mistakes (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   created_at      INTEGER NOT NULL,
@@ -105,4 +109,39 @@ CREATE TABLE IF NOT EXISTS mistakes (
   question_number INTEGER NOT NULL,
   picked_position INTEGER NOT NULL
 );
+
+-- daily（以 daily_key + item_number 為鍵）
+CREATE TABLE IF NOT EXISTS daily_sets (
+  daily_key TEXT PRIMARY KEY,
+  level     TEXT NOT NULL,
+  category  TEXT NOT NULL,  -- 'grammar' | 'vocab'
+  title     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS daily_questions (
+  daily_key   TEXT NOT NULL,
+  item_number INTEGER NOT NULL,
+  stem        TEXT NOT NULL,
+  passage     TEXT,
+  question_type TEXT,
+  CONSTRAINT pk_daily_q PRIMARY KEY (daily_key, item_number),
+  CONSTRAINT fk_daily_set FOREIGN KEY (daily_key) REFERENCES daily_sets(daily_key) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS daily_choices (
+  daily_key   TEXT NOT NULL,
+  item_number INTEGER NOT NULL,
+  position    INTEGER NOT NULL,
+  content     TEXT NOT NULL,
+  is_correct  INTEGER NOT NULL DEFAULT 0,
+  explanation TEXT,
+  CONSTRAINT uq_daily_choice UNIQUE (daily_key, item_number, position),
+  CONSTRAINT fk_daily_q FOREIGN KEY (daily_key, item_number)
+    REFERENCES daily_questions(daily_key, item_number)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_sets_lc ON daily_sets(level, category);
+CREATE INDEX IF NOT EXISTS idx_daily_questions_key ON daily_questions(daily_key);
+CREATE INDEX IF NOT EXISTS idx_daily_choices_key ON daily_choices(daily_key, item_number);
 `;

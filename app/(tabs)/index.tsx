@@ -7,14 +7,13 @@ import {
   StyleSheet,
   ScrollView,
   useColorScheme,
+  Alert,
 } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuiz } from '../../src/store/useQuiz';
 import type { PracticeFilter } from '../../src/db';
 import type { Topic } from '../../src/db/schema';
-
-type KindUI = 'lang_reading' | 'listening';
 
 const YEARS_11_20 = Array.from({ length: 10 }, (_, i) => 2011 + i);
 const YEARS_21_25 = Array.from({ length: 5 }, (_, i) => 2021 + i);
@@ -98,43 +97,31 @@ export default function PracticeFilterScreen() {
   const { s } = useMemo(() => makeStyles(isDark), [isDark]);
   const { init } = useQuiz();
 
-  // ────────────── 預設值（如「咩都無揀」）──────────────
-  // 預設：N2／2021年／7月
-  const [level, setLevel] = useState<Topic | 'daily' | null>('N2');
+  // 預設：N2／2021／7月
+  const [level, setLevel] = useState<Topic>('N2');
   const [year, setYear] = useState<number | null>(2021);
-  const [session, setSession] = useState<'July' | 'December' | null>('July');
-
-  // 類型：合併「言語+讀解」或「聽解」
-  const [kindUI, setKindUI] = useState<KindUI>('lang_reading');
-
-  // 年份展開
+  const [month, setMonth] = useState<'07' | '12' | null>('07'); // 👈 直接用 month（不再用 session）
   const [open1120, setOpen1120] = useState(true);
   const [open2125, setOpen2125] = useState(true);
 
-  const isNLevel = typeof level === 'string' && /^N[1-5]$/.test(level);
-  const canStart = !!level && (!isNLevel || (year && session));
+  const canStart = !!level && !!year && !!month;
 
-  const onStartPress = () => {
-    if (!canStart) return;
+  const onStartPress = async () => {
+    if (!canStart || !year || !month) return;
+    // 只做「言語 + 讀解」(language)。聽解之後先開。
+    const base: PracticeFilter = {
+      level,
+      kind: 'language',
+      year,
+      month,        // ✅ 明確傳 month 給 DB（'07' or '12'）
+    };
 
-    const base: PracticeFilter = ((): PracticeFilter => {
-      if (level === 'daily') {
-        // 日常題目：唔跟卷期
-        return {
-          level: 'daily' as any,
-          kind: kindUI === 'listening' ? 'listening' : 'language',
-        };
-      }
-      // N 級 + 年月：整份卷
-      return {
-        level: level as Topic,
-        kind: kindUI === 'listening' ? 'listening' : 'language',
-        year: year ?? undefined,
-        session: session ?? undefined,
-      } as PracticeFilter;
-    })();
-
-    void init(base).then(() => router.navigate('/(tabs)/practice'));
+    const ok = await init(base);
+    if (!ok) {
+      Alert.alert('題庫未準備', '呢份卷暫時未有題目，請揀其他年份或月份。');
+      return;
+    }
+    router.push('/(tabs)/practice-exam'); // ✅ 直入 Exam 練習頁
   };
 
   return (
@@ -142,7 +129,6 @@ export default function PracticeFilterScreen() {
       <ScrollView contentContainerStyle={s.wrap}>
         {/* 程度 */}
         <Text style={s.sectionTitle}>程度</Text>
-        {/* 第一行：N1–N5 */}
         <View style={s.row}>
           {(['N1','N2','N3','N4','N5'] as const).map(k => (
             <Pressable
@@ -154,17 +140,8 @@ export default function PracticeFilterScreen() {
             </Pressable>
           ))}
         </View>
-        {/* 第二行：日常生活題目（放到 N1–N5 下面） */}
-        <View style={s.row}>
-          <Pressable
-            onPress={() => { setLevel('daily'); /* 可選：清空年/月 */ /* setYear(null); setSession(null); */ }}
-            style={[s.pill, level === 'daily' && s.pillActive]}
-          >
-            <Text style={[s.pillText, level === 'daily' && s.pillTextActive]}>日常生活題目</Text>
-          </Pressable>
-        </View>
 
-        {/* 年份（只保留實際年份） */}
+        {/* 年份 */}
         <Text style={s.sectionTitle}>年份</Text>
         <Pressable onPress={() => setOpen1120(v => !v)} style={s.boxHeader}>
           <Text style={s.boxHeaderText}>2011–2020</Text>
@@ -206,48 +183,25 @@ export default function PracticeFilterScreen() {
           </View>
         )}
 
-        {/* 月份（只保留 7 / 12） */}
+        {/* 月份 */}
         <Text style={s.sectionTitle}>月份</Text>
         <View style={s.row}>
           {[
-            { k: 'July', label: '7月' },
-            { k: 'December', label: '12月' },
+            { k: '07', label: '7月' as const },
+            { k: '12', label: '12月' as const },
           ].map(x => (
             <Pressable
               key={x.k}
-              onPress={() => setSession(x.k as 'July' | 'December')}
-              style={[s.pill, session === (x.k as any) && s.pillActive]}
+              onPress={() => setMonth(x.k as '07' | '12')}
+              style={[s.pill, month === x.k && s.pillActive]}
             >
-              <Text style={[s.pillText, session === (x.k as any) && s.pillTextActive]}>{x.label}</Text>
+              <Text style={[s.pillText, month === x.k && s.pillTextActive]}>{x.label}</Text>
             </Pressable>
           ))}
         </View>
 
-        {/* 類型（合併「言語+讀解」成一個按鈕） */}
-        <Text style={s.sectionTitle}>類型</Text>
-        <View style={s.row}>
-          <Pressable
-            onPress={() => setKindUI('lang_reading')}
-            style={[s.pill, kindUI === 'lang_reading' && s.pillActive]}
-          >
-            <Text style={[s.pillText, kindUI === 'lang_reading' && s.pillTextActive]}>
-              言語 + 讀解
-            </Text>
-          </Pressable>
-          <Pressable
-            onPress={() => setKindUI('listening')}
-            style={[s.pill, kindUI === 'listening' && s.pillActive]}
-          >
-            <Text style={[s.pillText, kindUI === 'listening' && s.pillTextActive]}>
-              聽解
-            </Text>
-          </Pressable>
-        </View>
-
         {/* 開始練習 */}
-        {!canStart && isNLevel && (
-          <Text style={s.hint}>請揀齊「年份」同「月份」先可以開始。</Text>
-        )}
+        {!canStart && <Text style={s.hint}>請揀齊「年份」同「月份」先可以開始。</Text>}
         <Pressable
           style={[s.next, !canStart && s.nextDisabled]}
           onPress={onStartPress}

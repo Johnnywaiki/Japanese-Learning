@@ -15,13 +15,15 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <Stack screenOptions={{ headerShown: false }}>
-        {/* Intro 開場頁（顯示你的 splash 圖），完咗會 replace 到 (tabs) */}
-        <Stack.Screen name="intro" options={{ headerShown: false }} />
-
-        {/* 底部 Tabs（自己有 header） */}
+        {/* ✅ Tabs group 喺呢度註冊 */}
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
 
-        {/* 設定頁（用 Root Stack 的 header） */}
+        {/* ✅ 結果頁：modal 呈現 */}
+        <Stack.Screen
+          name="result"
+          options={{ presentation: 'modal', headerShown: false, gestureEnabled: false }}
+        />
+
         <Stack.Screen
           name="settings"
           options={{

@@ -1,71 +1,85 @@
-import { DeviceEventEmitter } from 'react-native';
+// src/store/useQuiz.ts
 import { create } from 'zustand';
 import {
+  ensureSeedOnce,
   getAllForFilter,
-  seedIfEmpty,
+  getDailyPool,
+  makeDailyKey,
   insertMistake,
   type PracticeFilter,
+  type Topic,
+  type PoolQuestion,
 } from '../db';
-import { makeQuestion } from '../features/practice/quiz';
-import type { PoolQuestion } from '../db/schema';
 
 type Option = {
   position: number;
   content: string;
   is_correct: boolean;
-  explanation?: string;
+  explanation?: string | null;
 };
 type AnswerRec = { picked: Option; correct: boolean };
 
+export type DailyMeta = {
+  daily_key?: string;
+  level: Topic;
+  category: 'grammar' | 'vocab';
+  week: number; // 1..10
+  day: number;  // 1..7
+  dayKey?: string;
+};
+
+function makeQuestion(q: PoolQuestion) {
+  const options: Option[] = q.choices.map(c => ({
+    position: c.position,
+    content: c.content,
+    is_correct: c.is_correct,
+    explanation: c.explanation ?? null,
+  }));
+  const correctOption = options.find(o => o.is_correct)!;
+  return {
+    exam_key: q.exam_key,
+    question_number: q.question_number,
+    stem: q.stem,
+    passage: q.passage,
+    options,
+    correctOption,
+    isCorrect: (o: Option) => !!o?.is_correct,
+  };
+}
+
 type State = {
   loading: boolean;
+  mode: 'mock' | 'daily';
+  meta?: DailyMeta | PracticeFilter;
 
   pool: PoolQuestion[];
-  idx: number; // 0-based
+  idx: number;
   current?: ReturnType<typeof makeQuestion>;
 
-  selected?: Option | null; // 當前選擇（未提交）
+  selected?: Option | null;
   answered: boolean;
   lastCorrect?: boolean;
 
-  score: number; // 已答對題數
-  total: number; // 已作答題數
-  totalAvailable: number; // 全卷題數（包含 reading 等）
-  answers: Record<number, AnswerRec>; // 每題作答紀錄
+  score: number;
+  total: number;
+  totalAvailable: number;
+  answers: Record<number, AnswerRec>;
 
-  init: (filters?: PracticeFilter) => Promise<void>;
+  init: (
+    params?:
+      | (PracticeFilter & { extra?: undefined })
+      | { extra: DailyMeta; level?: Topic; kind?: 'language' | 'reading' }
+      | any
+  ) => Promise<boolean>;
+
   pick: (o: Option) => void;
   submit: () => void;
   next: () => void;
   prev: () => void;
   jumpTo: (i: number) => void;
-};
 
-// ---------- helpers ----------
-const isNLevel = (lv: any) => typeof lv === 'string' && /^N[1-5]$/.test(lv);
-
-const sessionToCode = (s: any): '07' | '12' | undefined => {
-  if (s === 'July' || s === 7 || s === '7' || s === '07') return '07';
-  if (s === 'December' || s === 12 || s === '12') return '12';
-  return undefined;
+  reset: () => void;
 };
-const sessionToWord = (s: any): 'July' | 'December' | undefined => {
-  if (s === 'July' || s === 7 || s === '7' || s === '07') return 'July';
-  if (s === 'December' || s === 12 || s === '12') return 'December';
-  return undefined;
-};
-
-function yearFromExamKey(key?: string): number | undefined {
-  if (!key) return undefined;
-  const m = key.match(/^(N[1-5])-(\d{4})-(\d{2})$/);
-  return m ? Number(m[2]) : undefined;
-}
-function monthFromExamKey(key?: string): '07' | '12' | undefined {
-  if (!key) return undefined;
-  const m = key.match(/^(N[1-5])-(\d{4})-(\d{2})$/);
-  if (!m) return undefined;
-  return m[3] === '07' || m[3] === '12' ? (m[3] as '07' | '12') : undefined;
-}
 
 function uniqueByExamAndNo(rows: PoolQuestion[]) {
   const mp = new Map<string, PoolQuestion>();
@@ -78,12 +92,17 @@ function uniqueByExamAndNo(rows: PoolQuestion[]) {
 
 export const useQuiz = create<State>((set, get) => ({
   loading: false,
+  mode: 'mock',
+  meta: undefined,
+
   pool: [],
   idx: 0,
   current: undefined,
+
   selected: null,
   answered: false,
   lastCorrect: undefined,
+
   score: 0,
   total: 0,
   totalAvailable: 0,
@@ -91,120 +110,93 @@ export const useQuiz = create<State>((set, get) => ({
 
   async init(raw) {
     set({ loading: true });
-    await seedIfEmpty();
 
-    const DEFAULTS: PracticeFilter = { level: 'N2-N3-random', kind: 'language' };
+    await ensureSeedOnce();
 
-    const level = raw?.level;
-    const year = typeof raw?.year === 'number' ? raw.year : undefined;
-    const sCode = sessionToCode(raw?.session);     // '07' | '12'
-    const sWord = sessionToWord(raw?.session);     // 'July' | 'December'
-    const wholePaper = isNLevel(level) && year !== undefined && (sCode || sWord);
-
-    // 單次查詢（包埋 session 兩個格式嘗試）
-    const fetchOnce = (f: any): PoolQuestion[] => {
-      let { pool } = getAllForFilter(f);
-      if (!pool.length && f.session) {
-        const alt =
-          f.session === 'July' ? '07' :
-          f.session === 'December' ? '12' :
-          f.session === '07' ? 'July' :
-          f.session === '12' ? 'December' :
-          undefined;
-        if (alt) {
-          const { pool: pool2 } = getAllForFilter({ ...f, session: alt });
-          pool = pool2;
-        }
-      }
-      return pool;
-    };
-
+    const extra: DailyMeta | undefined = raw?.extra;
     let pool: PoolQuestion[] = [];
+    let mode: 'daily' | 'mock' = 'mock';
+    let meta: any = undefined;
 
-    if (wholePaper) {
-      // 完整一份卷：逐個 kind 取，再合併（讀解都會入）
-      const kinds = ['language', 'reading', 'listening'] as const;
-      for (const k of kinds) {
-        const part = fetchOnce({
-          level, kind: k, year, session: sWord ?? sCode,
-        } as any);
-        pool.push(...part);
+    if (extra && (extra.daily_key || (extra.level && extra.category && extra.week && extra.day))) {
+      // Daily
+      mode = 'daily';
+      const daily_key =
+        extra.daily_key ?? makeDailyKey(extra.level, extra.category, extra.week, extra.day);
+      const r = getDailyPool(daily_key);
+      pool = r.pool ?? [];
+      meta = { ...extra, daily_key };
+
+      if (!pool.length) {
+        console.warn('[useQuiz.init] daily pool empty:', daily_key);
+        set({
+          loading: false, mode, meta, pool: [],
+          idx: 0, current: undefined, selected: null, answered: false,
+          lastCorrect: undefined, score: 0, total: 0, totalAvailable: 0, answers: {},
+        });
+        return false;
       }
     } else {
-      // 非完整卷：照用戶 filter 取一次（預設值兜底）
-      const f = raw ?? DEFAULTS;
-      pool = fetchOnce(f as any);
-    }
+      // Exam/Mock
+      const DEFAULTS: PracticeFilter = { level: 'N2-N3-random', kind: 'language' };
+      const f: PracticeFilter = raw ?? DEFAULTS;
 
-    // 前端硬性過濾（雙重保險）
-    if (year !== undefined) {
-      pool = pool.filter((q) => yearFromExamKey(q.exam_key) === year);
-    }
-    if (sCode) {
-      pool = pool.filter((q) => monthFromExamKey(q.exam_key) === sCode);
-    }
+      const r = getAllForFilter(f);
+      pool = (r.pool ?? []).slice();
 
-    // 去重 + 排序
-    const ordered = uniqueByExamAndNo(pool).sort((a, b) => {
-      if (a.exam_key === b.exam_key) return a.question_number - b.question_number;
-      return a.exam_key < b.exam_key ? -1 : 1;
-    });
-
-    if (ordered.length === 0) {
-      console.warn('[init] 無題目：', JSON.stringify({ raw }));
-      set({
-        loading: false,
-        pool: [],
-        idx: 0,
-        current: undefined,
-        selected: null,
-        answered: false,
-        lastCorrect: undefined,
-        score: 0,
-        total: 0,
-        totalAvailable: 0,
-        answers: {},
+      // 去重 & 排序
+      pool = uniqueByExamAndNo(pool).sort((a, b) => {
+        if (a.exam_key === b.exam_key) return a.question_number - b.question_number;
+        return a.exam_key < b.exam_key ? -1 : 1;
       });
-      return;
+
+      meta = f;
+
+      if (!pool.length) {
+        console.warn('[useQuiz.init] mock pool empty:', { raw });
+        set({
+          loading: false, mode: 'mock', meta, pool: [],
+          idx: 0, current: undefined, selected: null, answered: false,
+          lastCorrect: undefined, score: 0, total: 0, totalAvailable: 0, answers: {},
+        });
+        return false;
+      }
     }
 
     set({
       loading: false,
-      pool: ordered,
+      mode,
+      meta,
+      pool,
       idx: 0,
-      current: makeQuestion(ordered[0]),
+      current: makeQuestion(pool[0]),
       selected: null,
       answered: false,
       lastCorrect: undefined,
       score: 0,
       total: 0,
-      totalAvailable: ordered.length,
+      totalAvailable: pool.length,
       answers: {},
     });
+
+    return true;
   },
 
   pick(o) {
     const { idx, answers, answered } = get();
-    if (answered) return;       // 已提交唔俾改
-    if (answers[idx]) return;   // 呢題已提交過
+    if (answered) return;
+    if (answers[idx]) return;
     set({ selected: o });
   },
 
   submit() {
     const { current, selected, idx, answers } = get();
     if (!current || !selected) return;
-    if (answers[idx]) return; // 防重覆計分
+    if (answers[idx]) return;
 
     const correct = current.isCorrect(selected);
-
     if (!correct) {
       insertMistake({
-        exam_key: current.exam_key,
-        question_number: current.question_number,
-        picked_position: selected.position,
-      });
-      // ✅ 告知錯題頁即時刷新
-      DeviceEventEmitter.emit('mistake-added', {
         exam_key: current.exam_key,
         question_number: current.question_number,
         picked_position: selected.position,
@@ -222,12 +214,10 @@ export const useQuiz = create<State>((set, get) => ({
 
   next() {
     const { pool, idx, answers } = get();
-    if (pool.length === 0) return;
-
+    if (!pool.length) return;
     const nextIdx = Math.min(pool.length - 1, idx + 1);
     const q = makeQuestion(pool[nextIdx]);
     const past = answers[nextIdx];
-
     set({
       idx: nextIdx,
       current: q,
@@ -239,12 +229,10 @@ export const useQuiz = create<State>((set, get) => ({
 
   prev() {
     const { pool, idx, answers } = get();
-    if (pool.length === 0) return;
-
+    if (!pool.length) return;
     const prevIdx = Math.max(0, idx - 1);
     const q = makeQuestion(pool[prevIdx]);
     const past = answers[prevIdx];
-
     set({
       idx: prevIdx,
       current: q,
@@ -256,18 +244,34 @@ export const useQuiz = create<State>((set, get) => ({
 
   jumpTo(i) {
     const { pool, answers } = get();
-    if (pool.length === 0) return;
-
+    if (!pool.length) return;
     const clamped = Math.max(0, Math.min(pool.length - 1, i));
     const q = makeQuestion(pool[clamped]);
     const past = answers[clamped];
-
     set({
       idx: clamped,
       current: q,
       selected: past?.picked ?? null,
       answered: !!past,
       lastCorrect: past?.correct,
+    });
+  },
+
+  reset() {
+    set({
+      loading: false,
+      mode: 'mock',
+      meta: undefined,
+      pool: [],
+      idx: 0,
+      current: undefined,
+      selected: null,
+      answered: false,
+      lastCorrect: undefined,
+      score: 0,
+      total: 0,
+      totalAvailable: 0,
+      answers: {},
     });
   },
 }));
