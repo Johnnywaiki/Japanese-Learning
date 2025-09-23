@@ -1,5 +1,5 @@
 // app/(tabs)/home.tsx
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import {
   View as RNView,
   Text as RNText,
@@ -8,6 +8,7 @@ import {
   useColorScheme,
   Alert,
   ScrollView as RNScrollView,
+  LayoutChangeEvent,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -44,17 +45,17 @@ function makeStyles(isDark: boolean) {
     lockedCard: isDark ? '#1a1a1a' : '#f3f4f6',
     lockedText: isDark ? '#6b7280' : '#9aa0a6',
     badgeBg: isDark ? '#0f172a' : '#eef2ff',
-    // 狀態色
-    doneBg: '#22c55e',        // 綠底
-    doneIcon: '#ffffff',      // 白 icon
-    availBg: '#f59e0b',       // 橙底
-    availIcon: '#ffffff',     // 白 icon
-    lockBg: isDark ? '#1f2937' : '#e5e7eb', // 灰底
-    lockIcon: isDark ? '#6b7280' : '#9aa0a6', // 灰 icon
+    doneBg: '#22c55e',
+    doneIcon: '#ffffff',
+    availBg: '#f59e0b',
+    availIcon: '#ffffff',
+    lockBg: isDark ? '#1f2937' : '#e5e7eb',
+    lockIcon: isDark ? '#6b7280' : '#9aa0a6',
     accent: isDark ? '#93c5fd' : '#2563eb',
     dropdownBg: isDark ? '#0f172a' : '#ffffff',
     dropdownBorder: isDark ? '#1f2937' : '#e5e7eb',
     dropdownItemActiveBg: isDark ? '#111827' : '#f3f4f6',
+    shadowColor: '#000',
   };
   const s = StyleSheet.create({
     screen: { flex: 1, backgroundColor: C.bg },
@@ -62,7 +63,11 @@ function makeStyles(isDark: boolean) {
 
     levelHeaderStack: { position: 'relative', zIndex: 1000, elevation: 1000 },
     levelHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-    levelBadge: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, backgroundColor: C.badgeBg, borderWidth: 1, borderColor: C.accent },
+    levelBadge: {
+      paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12,
+      backgroundColor: C.badgeBg, borderWidth: 1, borderColor: C.accent,
+      shadowColor: C.shadowColor, shadowOpacity: 0.18, shadowRadius: 6, shadowOffset: { width: 0, height: 4 }, elevation: 3,
+    },
     levelBadgeText: { fontSize: 16, fontWeight: '900', color: C.accent },
 
     backdrop: { ...StyleSheet.absoluteFillObject, zIndex: 1001 },
@@ -76,20 +81,30 @@ function makeStyles(isDark: boolean) {
     ddItemText: { fontSize: 15, color: C.text, fontWeight: '700' },
 
     row: { flexDirection: 'row', gap: 12, zIndex: 0 },
+
     bigBtn: {
-      flex: 1, paddingVertical: 18, borderRadius: 12, borderWidth: 1, borderColor: C.border,
+      flex: 1, paddingVertical: 18, borderRadius: 16, borderWidth: 1.5, borderColor: C.border,
       backgroundColor: C.card, alignItems: 'center', justifyContent: 'center',
+      shadowColor: C.shadowColor, shadowOpacity: 0.20, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 6,
     },
     bigBtnActive: { borderColor: C.accent, backgroundColor: C.badgeBg },
-    bigBtnText: { fontSize: 16, fontWeight: '700', color: C.text },
+    bigBtnText: { fontSize: 16, fontWeight: '800', color: C.text, letterSpacing: 0.3 },
 
-    card: { marginTop: 8, padding: 14, borderRadius: 16, borderWidth: 1, borderColor: C.border, backgroundColor: C.card, zIndex: 0 },
-    cardLocked: { backgroundColor: C.lockedCard, borderColor: C.lockedCard },
+    card: {
+      marginTop: 8, padding: 14, borderRadius: 16, borderWidth: 1, borderColor: C.border, backgroundColor: C.card, zIndex: 0,
+      shadowColor: C.shadowColor, shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 6 }, elevation: 4,
+    },
+    cardLocked: { backgroundColor: C.lockedCard, borderColor: C.lockedCard, shadowOpacity: 0.05, elevation: 1 },
     cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-    cardTitle: { fontSize: 16, fontWeight: '800', color: C.text },
+    cardTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    unlockTag: {
+      paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, borderWidth: 1,
+      borderColor: C.border, backgroundColor: isDark ? '#0f172a' : '#f8fafc',
+    },
+    unlockTagText: { fontSize: 12, fontWeight: '700', color: C.soft },
 
     badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, borderWidth: 1, borderColor: C.border, backgroundColor: isDark ? '#0f172a' : '#f8fafc' },
-    badgeText: { fontSize: 12, color: C.soft },
+    badgeText: { fontSize: 12, color: C.soft, fontWeight: '700' },
 
     snakeWrap: { flexDirection: 'row', justifyContent: 'space-between' },
     col: { width: '48%' },
@@ -98,6 +113,7 @@ function makeStyles(isDark: boolean) {
     pill: {
       height: 72, borderRadius: 36, borderWidth: 2, borderColor: C.border, backgroundColor: C.card,
       alignItems: 'center', justifyContent: 'center', marginBottom: 12,
+      shadowColor: C.shadowColor, shadowOpacity: 0.15, shadowRadius: 8, shadowOffset: { width: 0, height: 6 }, elevation: 4,
     },
   });
   return { s, C };
@@ -110,7 +126,7 @@ function IconRender({ spec, color }: { spec: IconSpec; color: string }) {
 
 type DayStatus = 'done' | 'available' | 'locked';
 
-/** 單日解鎖；但「第 1 週」初次有兩粒橙（day1 & day2） */
+/** 單日解鎖；「第 1 週」初次兩粒橙（day1 & day2） */
 function computeDayStatuses(params: {
   level: Level;
   category: Category | null;
@@ -120,34 +136,38 @@ function computeDayStatuses(params: {
 }): DayStatus[] {
   const { level, category, week, unlockedWeek, completedSet } = params;
   const res: DayStatus[] = Array(7).fill('locked');
-
   if (!category || week > unlockedWeek) return res;
 
   const isDone = (d: number) => completedSet.has(tokenOf(level, category, week, d));
 
-  // 先標記已完成
-  for (let d = 1; d <= 7; d++) {
-    if (isDone(d)) res[d - 1] = 'done';
-  }
+  for (let d = 1; d <= 7; d++) if (isDone(d)) res[d - 1] = 'done';
 
-  // 🔸 特例：第 1 週，而且 day1/day2 都未做 → 初次顯示兩粒橙
   if (week === 1 && !isDone(1) && !isDone(2)) {
     res[0] = 'available';
     res[1] = 'available';
-    // 其餘保持 locked
     return res;
   }
-
-  // 一般規則：只開放「第一個未完成」的一粒
   const firstUndone = Array.from({ length: 7 }, (_, i) => i + 1).find(d => !isDone(d));
-  if (firstUndone) {
-    res[firstUndone - 1] = 'available';
-  }
-  // 7/7 完成 → 全 done（下一週由進度邏輯解鎖）
+  if (firstUndone) res[firstUndone - 1] = 'available';
   return res;
 }
 
-/* ---------------- WeekCard ---------------- */
+/** 尋找「最新可做」週：優先最高週數內第一個有 available 的；否則回傳目前 unlocked 週 */
+function findTargetWeek(args: {
+  level: Level;
+  category: Category | null;
+  unlockedWeek: number;
+  completedSet: Set<string>;
+}): number {
+  const { level, category, unlockedWeek, completedSet } = args;
+  if (!category) return 1;
+  for (let w = unlockedWeek; w >= 1; w--) {
+    const sts = computeDayStatuses({ level, category, week: w, unlockedWeek, completedSet });
+    if (sts.some(s => s === 'available')) return w;
+  }
+  return Math.max(1, Math.min(10, unlockedWeek));
+}
+
 type WeekCardProps = {
   level: Level;
   category: Category | null;
@@ -155,43 +175,52 @@ type WeekCardProps = {
   unlockedWeek: number;
   completedSet: Set<string>;
   onTryPickDay: (week: number, dayIndex: number, status: DayStatus) => void;
+  onLayoutWeek: (week: number, e: LayoutChangeEvent) => void;
   s: ReturnType<typeof makeStyles>['s'];
   C: ReturnType<typeof makeStyles>['C'];
 };
 
 function WeekCard({
-  level, category, week, unlockedWeek, completedSet, onTryPickDay, s, C,
+  level, category, week, unlockedWeek, completedSet, onTryPickDay, onLayoutWeek, s, C,
 }: WeekCardProps) {
   const left = [0, 2, 4, 6].filter((i) => i < ICONS.length);
   const right = [1, 3, 5].filter((i) => i < ICONS.length);
-
   const statuses = computeDayStatuses({ level, category, week, unlockedWeek, completedSet });
   const weekUnlocked = week <= unlockedWeek;
 
   const renderPill = (i: number) => {
-    const day = i + 1;
     const st = statuses[i];
-
-    let pillBg = C.lockBg, iconColor = C.lockIcon, borderColor = C.border;
-    if (st === 'done') { pillBg = C.doneBg; iconColor = C.doneIcon; borderColor = C.doneBg; }
-    else if (st === 'available') { pillBg = C.availBg; iconColor = C.availIcon; borderColor = C.availBg; }
+    let pillBg = C.lockBg, iconColor = C.lockIcon, borderColor = C.border, elev = 4;
+    if (st === 'done') { pillBg = C.doneBg; iconColor = C.doneIcon; borderColor = C.doneBg; elev = 2; }
+    else if (st === 'available') { pillBg = C.availBg; iconColor = C.availIcon; borderColor = C.availBg; elev = 6; }
 
     const inner = (
-      <RNView key={ICONS[i].key}
-        style={[s.pill, { backgroundColor: pillBg, borderColor }]}
+      <RNView
+        key={ICONS[i].key}
+        style={[
+          s.pill,
+          {
+            backgroundColor: pillBg,
+            borderColor,
+            elevation: elev,
+            shadowOpacity: st === 'locked' ? 0.08 : 0.18,
+          },
+        ]}
       >
         <IconRender spec={ICONS[i]} color={iconColor} />
       </RNView>
     );
 
-    if (!weekUnlocked) return inner; // 整週鎖住
+    if (!weekUnlocked) return inner;
 
     return (
       <RNPressable
         key={ICONS[i].key}
         onPress={() => onTryPickDay(week, i, st)}
         android_ripple={{ color: '#00000011', borderless: false }}
-        style={({ pressed }) => [ { borderRadius: 36 }, pressed && { transform: [{ scale: 0.98 }], opacity: 0.9 } ]}
+        style={({ pressed }) => [
+          { borderRadius: 36, transform: [{ scale: pressed ? 0.98 : 1 }] },
+        ]}
       >
         {inner}
       </RNPressable>
@@ -205,11 +234,21 @@ function WeekCard({
     : 0;
 
   return (
-    <RNView pointerEvents={weekUnlocked ? 'auto' : 'none'} style={[s.card, !weekUnlocked && s.cardLocked]}>
+    <RNView
+      onLayout={(e) => onLayoutWeek(week, e)}
+      pointerEvents={weekUnlocked ? 'auto' : 'none'}
+      style={[s.card, !weekUnlocked && s.cardLocked]}
+    >
       <RNView style={s.cardHeader}>
-        <RNText style={s.cardTitle}>第 {week} 週</RNText>
+        <RNView style={s.cardTitleRow}>
+          <RNText style={{ fontSize: 16, fontWeight: '900', color: C.text }}>第 {week} 週</RNText>
+          <RNView style={s.unlockTag}>
+            <RNText style={s.unlockTagText}>{weekUnlocked ? '已解鎖' : '未解鎖'}</RNText>
+          </RNView>
+        </RNView>
         <RNView style={s.badge}><RNText style={s.badgeText}>{doneCount}/7</RNText></RNView>
       </RNView>
+
       <RNView style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
         <RNView style={s.col}>{left.map(renderPill)}</RNView>
         <RNView style={[s.col, s.offset]}>{right.map(renderPill)}</RNView>
@@ -218,19 +257,38 @@ function WeekCard({
   );
 }
 
-/* ---------------- Screen ---------------- */
 export default function HomeScreen() {
   const isDark = useColorScheme() === 'dark';
   const { s, C } = useMemo(() => makeStyles(isDark), [isDark]);
-
-  const bump = useProgressBus((st) => st.bump);
-  const [lastSeenBump, setLastSeenBump] = useState(0);
 
   const [level, setLevel] = useState<Level | null>(null);
   const [pick, setPick] = useState<Category | null>(null);
   const [unlocked, setUnlocked] = useState<number>(1);
   const [completedSet, setCompletedSet] = useState<Set<string>>(new Set());
   const [showLevelMenu, setShowLevelMenu] = useState(false);
+
+  // ── Scroll refs & offsets
+  const svRef = useRef<RNScrollView>(null);
+  const weekOffsets = useRef<Record<number, number>>({});
+  const layoutReady = useRef(false); // 等全部 onLayout 回來先捲
+  const lastAutoWeek = useRef<number | null>(null);
+
+  const onLayoutWeek = useCallback((week: number, e: LayoutChangeEvent) => {
+    const y = e.nativeEvent.layout.y;
+    weekOffsets.current[week] = y;
+    // 簡單假設：十個週卡都有回來就 ready（或可以用 Object.keys 長度判斷）
+    if (Object.keys(weekOffsets.current).length >= 10) {
+      layoutReady.current = true;
+    }
+  }, []);
+
+  const scrollToWeek = useCallback((week: number, animated = true) => {
+    const y = weekOffsets.current[week];
+    if (y == null) return;
+    // 預留少少上邊距
+    svRef.current?.scrollTo({ y: Math.max(0, y - 12), animated });
+    lastAutoWeek.current = week;
+  }, []);
 
   const loadProgress = useCallback(async () => {
     const lv = (await AsyncStorage.getItem(LEVEL_KEY)) as Level | null;
@@ -260,14 +318,27 @@ export default function HomeScreen() {
     return () => { alive = false; };
   }, []));
 
-  // 🔔 bus: 完成每日後 practice-daily 會 bump()
-  const busValue = useProgressBus((st) => st.value);
+  // 🔔 bus 即時刷新
+  const busValue = useProgressBus(st => st.value);
+  const [seen, setSeen] = useState(busValue);
   useEffect(() => {
-    if (busValue !== lastSeenBump) {
-      setLastSeenBump(busValue);
-      void loadProgress(); // 即時刷新
+    if (busValue !== seen) {
+      setSeen(busValue);
+      void loadProgress();
     }
-  }, [busValue, lastSeenBump, loadProgress]);
+  }, [busValue, seen, loadProgress]);
+
+  // 🎯 自動捲到「最新可做」週（在 progress/level/pick 改變 或 layout ready 時）
+  useEffect(() => {
+    if (!level || !pick) return;
+    if (!layoutReady.current) return;
+
+    const target = findTargetWeek({ level, category: pick, unlockedWeek: unlocked, completedSet });
+    if (target && target !== lastAutoWeek.current) {
+      // 小延遲等 scrollView 完成排版
+      requestAnimationFrame(() => scrollToWeek(target));
+    }
+  }, [level, pick, unlocked, completedSet, scrollToWeek]);
 
   const selectPick = useCallback(async (cat: Category) => {
     setPick(cat);
@@ -275,19 +346,29 @@ export default function HomeScreen() {
     if (!level) return;
     setUnlocked(await getUnlockedWeek(level, cat));
     setCompletedSet(await getCompletedSet());
-  }, [level]);
+    // 切換類別都自動捲
+    requestAnimationFrame(() => {
+      const target = findTargetWeek({ level, category: cat, unlockedWeek: unlocked, completedSet });
+      if (target) scrollToWeek(target);
+    });
+  }, [level, unlocked, completedSet, scrollToWeek]);
 
   const selectLevel = useCallback(async (lv: Level) => {
     setLevel(lv);
     await AsyncStorage.setItem(LEVEL_KEY, lv);
     if (pick) {
-      setUnlocked(await getUnlockedWeek(lv, pick));
-      setCompletedSet(await getCompletedSet());
+      const u = await getUnlockedWeek(lv, pick);
+      const cs = await getCompletedSet();
+      setUnlocked(u);
+      setCompletedSet(cs);
+      requestAnimationFrame(() => {
+        const target = findTargetWeek({ level: lv, category: pick, unlockedWeek: u, completedSet: cs });
+        if (target) scrollToWeek(target);
+      });
     }
     setShowLevelMenu(false);
-  }, [pick]);
+  }, [pick, scrollToWeek]);
 
-  // 禁止跳級：locked → 提示；available/done → 進入當日練習
   const onTryPickDay = useCallback(
     async (week: number, dayIndex: number, status: DayStatus) => {
       if (!level || !pick) {
@@ -305,8 +386,8 @@ export default function HomeScreen() {
         extra: {
           level,
           category: pick,
-          week,               // 1..10
-          day: dayIndex + 1,  // 1..7
+          week,
+          day: dayIndex + 1,
         },
       });
       if (ok) router.push('/(tabs)/practice-daily');
@@ -317,9 +398,16 @@ export default function HomeScreen() {
 
   return (
     <RNScrollView
+      ref={svRef}
       style={s.screen}
       contentContainerStyle={[s.wrap, { paddingBottom: 40 }]}
       showsVerticalScrollIndicator
+      onContentSizeChange={() => {
+        // 初次 layout 完成後做一次自動捲
+        if (!layoutReady.current || !level || !pick) return;
+        const target = findTargetWeek({ level, category: pick, unlockedWeek: unlocked, completedSet });
+        if (target) scrollToWeek(target, false);
+      }}
     >
       {/* Level Header + Dropdown */}
       <RNView style={s.levelHeaderStack}>
@@ -333,7 +421,10 @@ export default function HomeScreen() {
 
           <RNPressable
             onPress={() => setShowLevelMenu(v => !v)}
-            style={({ pressed }) => [s.levelBadge, pressed && { opacity: 0.9, transform: [{ scale: 0.98 }] }]}
+            style={({ pressed }) => [
+              s.levelBadge,
+              pressed && { opacity: 0.92, transform: [{ scale: 0.98 }] },
+            ]}
             accessibilityRole="button"
             accessibilityLabel="切換 Level"
           >
@@ -365,13 +456,23 @@ export default function HomeScreen() {
 
       {/* 類別（文法／字彙） */}
       <RNView style={s.row}>
-        <RNPressable onPress={() => selectPick('grammar')}
-          style={({ pressed }) => [s.bigBtn, pick === 'grammar' && s.bigBtnActive, pressed && { opacity: 0.9 }]}
+        <RNPressable
+          onPress={() => selectPick('grammar')}
+          style={({ pressed }) => [
+            s.bigBtn,
+            { transform: [{ translateY: pressed ? 1 : 0 }] },
+            pick === 'grammar' && s.bigBtnActive,
+          ]}
         >
           <RNText style={s.bigBtnText}>文法</RNText>
         </RNPressable>
-        <RNPressable onPress={() => selectPick('vocab')}
-          style={({ pressed }) => [s.bigBtn, pick === 'vocab' && s.bigBtnActive, pressed && { opacity: 0.9 }]}
+        <RNPressable
+          onPress={() => selectPick('vocab')}
+          style={({ pressed }) => [
+            s.bigBtn,
+            { transform: [{ translateY: pressed ? 1 : 0 }] },
+            pick === 'vocab' && s.bigBtnActive,
+          ]}
         >
           <RNText style={s.bigBtnText}>字彙</RNText>
         </RNPressable>
@@ -387,6 +488,7 @@ export default function HomeScreen() {
           unlockedWeek={unlocked}
           completedSet={completedSet}
           onTryPickDay={onTryPickDay}
+          onLayoutWeek={onLayoutWeek}
           s={s}
           C={C}
         />
